@@ -21,6 +21,7 @@ from django.conf.urls.static import static
 from django.conf import settings
 from controlcenter.views import controlcenter
 from admin_notification.views import check_notification_view
+from admin_volt.views import download_report  # Đảm bảo import đúng
 
 
 urlpatterns = [

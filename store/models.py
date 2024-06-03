@@ -66,16 +66,20 @@ class Order(models.Model):
     order_day = models.DateField(auto_now_add=True, null= True)
     complete=models.BooleanField(default=False,null=True,blank=False)
     transaction_id=models.CharField(max_length=100,null=True)  
+    total_money = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     def __str__(self):
         if self.customer is not None:
             return str(self.customer)
         return "Unknown"
+   
 
     @property
     def get_cart_total(self):
         orderitems = self.orderitem_set.all()
         total = sum([item.get_total for item in orderitems])
+        self.total_money = total
+        self.save()
         return total
     @property
     def get_cart_items(self):
@@ -92,17 +96,14 @@ class Order(models.Model):
             return shipping
         
     def save(self, *args, **kwargs):
-        if self.complete:
-            order_items = self.orderitem_set.all()
-            for item in order_items:
-                if item.product is not None:
-                    if item.quantity > item.product.stock:
-                        raise ValidationError("Order quantity cannot be greater than stock")
-                    if item.product.stock - item.quantity < 0:
-                        raise ValidationError("Stock cannot be negative")
-                    item.product.stock -= item.quantity
-                    item.product.save()
-        super().save(*args, **kwargs)
+     if self.complete:
+        order_items = self.orderitem_set.all()
+        for item in order_items:
+            if item.product is not None:
+                #item.product.stock -= item.quantity
+                item.product.save()
+     super().save(*args, **kwargs)
+
 
 
 # Class OrderItem is created to detailed the order
@@ -110,7 +111,7 @@ class Order(models.Model):
 # Metod get_total is to get the total of the order
 class OrderItem (models.Model):
     product = models.ForeignKey(Product,on_delete=models.SET_NULL,null=True,blank=True)
-    order = models.ForeignKey(Order,on_delete=models.SET_NULL,null=True,blank=True)
+    order = models.ForeignKey(Order,on_delete=models.CASCADE,null=True,blank=True)
     quantity = models.IntegerField(default=0,null=True,blank=True, validators=[MinValueValidator(0)])
     date_added = models.DateTimeField(auto_now_add=True)
     
@@ -186,4 +187,3 @@ def create_user_customer(sender, instance, created, **kwargs):
 	print('****', created)
 	if instance.is_staff == False:
 		Customer.objects.get_or_create(user = instance, name = instance.username, email = instance.email)
-

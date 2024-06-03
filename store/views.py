@@ -12,8 +12,11 @@ from django.forms import inlineformset_factory
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
+from oracledb import DatabaseError
 from store.forms import CommentForm, CreateUserForm
 from store.models import *
+from django.db import transaction, connection
+
 
 # need to create forms and models
 
@@ -25,6 +28,10 @@ from store.models import *
 
 # -> Sau đó, lấy tất cả các sản phẩm từ cơ sở dữ liệu và trả về một trang HTML với thông tin về các sản phẩm và số lượng mặt hàng trong giỏ hàng.
 
+
+#def call_update_stock_before_order(order_id):
+ #  with connection.cursor() as cursor:
+  #    cursor.callproc('update_stock_before_order', [order_id])
 
 def store(request):
     if request.user.is_authenticated:
@@ -176,7 +183,7 @@ def cart(request):
 # -> nếu người dùng đã đăng nhập, lấy đơn hàng của người dùng đó và số lượng mặt hàng trong giỏ hàng
 # -> nếu người dùng chưa đăng nhập, trả về một trang HTML với các sản phẩm trong giỏ hàng (mặt hàng, đơn hàng, số lượng) là 0
 
-
+@transaction.atomic
 def checkout(request):
     if request.user.is_authenticated:
         customer = request.user
@@ -195,7 +202,7 @@ def checkout(request):
 # -> sau đó trả về một JSON với thông tin về sản phẩm đã được thêm hoặc xóa
 # Lưu thay đổi vào csdl
 
-
+@transaction.atomic
 def updateItem(request):
     data = json.loads(request.body)
     productId = data['productId']
@@ -225,35 +232,75 @@ def updateItem(request):
 # -> Lấy tổng số tiền của đơn hàng từ dữ liệu đã được chuyển đổi -> gán ID -> kiểm tra tiền -> lưu thay đổi vào csdl
 # -> kiểm tra thuộc tính của đơn hàng -> kiểm tra yêu cầu giao hàng -> tạo địa chỉ giao hàng mới
 
+def call_update_stock_before_order(order_id):
+   with connection.cursor() as cursor:
+     cursor.callproc('update_stock_before_order', [order_id])
 
+
+def set_serializable_isolation_level():
+    with connection.cursor() as cursor:
+        cursor.execute('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
+@transaction.atomic
 def processOrder(request):
-    print('Data', request.body)
-    transaction_id = datetime.datetime.now().timestamp()
-    data = json.loads(request.body)
-    if request.user.is_authenticated:
-        customer = request.user
-        order, created = Order.objects.get_or_create(
-            customer=customer, complete=False)
-        total = float(data['form']['total'])
-        order.transaction_id = transaction_id
+    try:
+        set_serializable_isolation_level()
+        with transaction.atomic():
+            print('Received data:', request.body)
+            transaction_id = datetime.datetime.now().timestamp()
+            data = json.loads(request.body)
 
-        if total == order.get_cart_total:
-            order.complete = True
-        order.save()
+            if request.user.is_authenticated:
+                customer = request.user
+                print(f"Processing order for authenticated user: {customer.username}")
 
-        if order.shipping == True:
-            ShippingAddress.objects.create(
-                customer=customer,
-                order=order,
-                address=data['shipping']['address'],
-                city=data['shipping']['city'],
-                state=data['shipping']['state'],
-                zipcode=data['shipping']['zipcode'],
-            )
+                order, created = Order.objects.get_or_create(
+                    customer=customer, complete=False)
+                if created:
+                    print(f"Created new order with ID: {order.id}")
+                else:
+                    print(f"Found existing order with ID: {order.id}")
 
-    else:
-        print('User is not logged in.. ')
-    return JsonResponse('Payment complete !', safe=False)
+                total = float(data['form']['total'])
+                order.transaction_id = transaction_id
+
+                if total == order.get_cart_total:
+                    order.complete = True
+                    print(f"Order total matches cart total. Marking order {order.id} as complete.")
+                order.save()
+                print(f"Order {order.id} saved with transaction ID: {transaction_id}")
+
+                # Gọi stored procedure để cập nhật số lượng tồn kho
+                call_update_stock_before_order(order.id)
+
+                if order.shipping:
+                    print(f"Creating shipping address for order {order.id}")
+                    ShippingAddress.objects.create(
+                        customer=customer,
+                        order=order,
+                        address=data['shipping']['address'],
+                        city=data['shipping']['city'],
+                        state=data['shipping']['state'],
+                        zipcode=data['shipping']['zipcode'],
+                    )
+                    print(f"Shipping address created for order {order.id}")
+
+            else:
+                print('User is not logged in.')
+                return JsonResponse('User is not logged in.', status=401, safe=False)
+
+        print("Order processing completed successfully.")
+        return JsonResponse('Payment complete!', safe=False)
+
+    except DatabaseError as e:
+        # Rollback transaction in case of database error
+        transaction.rollback()
+        print('Database error occurred:', e)
+        return JsonResponse({'error': 'Database error: ' + str(e)}, status=500, safe=False)
+    except Exception as e:
+        # Rollback transaction in case of other errors
+        transaction.rollback()
+        print('Error occurred:', e)
+        return JsonResponse({'error': 'Error: ' + str(e)}, status=500, safe=False)
 
 # Login page view xử lý yêu cầu của người dùng để đăng nhập
 # -> nếu người dùng đã đăng nhập, chuyển hướng người dùng đến trang chủ
@@ -318,3 +365,5 @@ def add_to_cart(request):
         product_id = request.POST['product_id']
         quantity = request.POST['quantity']
         # Now you can add the product to the cart
+
+

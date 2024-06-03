@@ -2,6 +2,12 @@ import datetime
 import json
 from django.template import Context
 from django.utils import translation
+import cx_Oracle
+from django.conf import settings
+from django.db import connection
+# utils.py
+import openpyxl
+from openpyxl.workbook import Workbook
 
 try:
     from django.apps.registry import apps
@@ -469,3 +475,35 @@ def user_is_authenticated(user):
         return user.is_authenticated
     else:
         return user.is_authenticated()
+
+def call_stored_procedure():
+    try:
+        cursor = connection.cursor()
+        
+        # Thực hiện stored procedure
+        result_cursor = cursor.var(cx_Oracle.CURSOR)
+        cursor.callproc("get_shipping_addresses", [result_cursor])
+        
+        # Lấy dữ liệu từ result_cursor
+        results = result_cursor.getvalue().fetchall()
+        return results
+    finally:
+        cursor.close()
+
+
+
+def generate_report(data):
+    # Tạo workbook và worksheet
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Shipping Addresses Report"
+
+    # Thêm tiêu đề cột
+    columns = ['Customer', 'Order', 'Name', 'Address', 'City', 'State', 'Zipcode', 'Date Added']
+    ws.append(columns)
+
+    # Thêm dữ liệu từ stored procedure vào báo cáo
+    for row in data:
+        ws.append(row)  # Giả sử dữ liệu trả về là list of tuples
+
+    return wb

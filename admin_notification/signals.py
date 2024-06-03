@@ -8,6 +8,8 @@ from django.apps import apps as django_apps
 from admin_notification.models import Notification
 from django.dispatch import receiver
 from django import dispatch
+from admin_volt.models import *  # Sửa ở đây
+from django.db import transaction, connection
 
 try:
     model = django_apps.get_model(settings.NOTIFICATION_MODEL, require_ready=False)
@@ -23,3 +25,6 @@ def post_save_handler(sender, **kwargs):
         notification = Notification.objects.all().first()
         notification.count += 1
         notification.save()
+
+
+
